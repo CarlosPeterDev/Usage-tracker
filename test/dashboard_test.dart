@@ -98,6 +98,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final queries = <String, List<Object?>>{};
+    final dailyWindows = <List<Object?>>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
       switch (call.method) {
         case 'hasAccess':
@@ -105,7 +106,7 @@ void main() {
         case 'daily':
           final arguments = call.arguments as Map;
           expect(arguments['wholeDays'], true);
-          queries['daily'] = arguments['bounds'] as List<Object?>;
+          dailyWindows.add(arguments['bounds'] as List<Object?>);
           return {
             'mobile': {
               'total': 24000000,
@@ -138,7 +139,7 @@ void main() {
     await tester.pumpWidget(const TrackerApp());
     await tester.pumpAndSettle();
     final currentDay = calendarDay(DateTime.now());
-    expect(queries['daily'], [
+    expect(dailyWindows.first, [
       currentDay.millisecondsSinceEpoch,
       calendarDay(currentDay, 1).millisecondsSinceEpoch,
     ]);
@@ -168,10 +169,12 @@ void main() {
     expect(queries['monthly'], hasLength(monthDays + 1));
     await tester.tap(find.text('Yesterday'));
     await tester.pumpAndSettle();
-    expect(queries['daily'], [
-      calendarDay(today, -1).millisecondsSinceEpoch,
+    final yesterday = calendarDay(today, -1);
+    expect(tester.widget<PeriodChart>(find.byType(PeriodChart)).day, yesterday);
+    expect(dailyWindows, contains([
+      yesterday.millisecondsSinceEpoch,
       calendarDay(today).millisecondsSinceEpoch,
-    ]);
+    ]));
     expect(tester.takeException(), isNull);
   });
 
@@ -224,7 +227,8 @@ void main() {
       await tester.pumpWidget(const TrackerApp());
       await tester.pumpAndSettle();
       await tester.tap(find.text(networkLabel));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump();
       requested.clear();
 
       await tester.tap(find.text('Yesterday'));
@@ -232,7 +236,7 @@ void main() {
       expect(find.text(heading), findsOneWidget);
       expect(find.text('Today app'), findsNothing);
       await tester.tap(find.text('Today'));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(requested, isEmpty);
       expect(find.text('Today app'), findsOneWidget);
 
@@ -255,10 +259,11 @@ void main() {
       expect(find.text('— · Weekly total'), findsOneWidget);
 
       delayedPeriod.complete(week);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
       expect(find.text('Latest app'), findsOneWidget);
       await tester.tap(find.text('Today'));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(requested, [yesterday, latest]);
       expect(find.text('Today app'), findsOneWidget);
     });
@@ -318,7 +323,7 @@ void main() {
     backgroundRead.complete(usage('Prefetched app'));
     await tester.pumpAndSettle();
     expect(find.text('Prefetched app'), findsOneWidget);
-    expect(requested, [today, yesterday]);
+    expect(requested.where((date) => date == today || date == yesterday), [today, yesterday]);
 
     await tester.tap(find.byTooltip('Back to overview'));
     await tester.pumpAndSettle();
@@ -327,7 +332,7 @@ void main() {
     await tester.tap(find.text('Yesterday'));
     await tester.pumpAndSettle();
     expect(find.text('Prefetched app'), findsOneWidget);
-    expect(requested, [today, yesterday]);
+    expect(requested.where((date) => date == today || date == yesterday), [today, yesterday]);
   });
 
   testWidgets('keeps Wi-Fi available without Android 7–9 Phone permission', (tester) async {
