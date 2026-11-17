@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:data_usage_tracker/main.dart';
@@ -173,6 +174,95 @@ void main() {
     ]);
     expect(tester.takeException(), isNull);
   });
+
+  for (final (networkLabel, heading) in [
+    ('Analyze Wi-Fi', 'Wi-Fi usage by app'),
+    ('Analyze mobile data', 'Mobile data usage by app'),
+  ]) {
+    testWidgets('$networkLabel keeps date controls usable during fast navigation', (tester) async {
+      tester.view.physicalSize = const Size(390, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final today = calendarDay(DateTime.now());
+      final yesterday = calendarDay(today, -1);
+      final latest = calendarDay(yesterday, -7);
+      final requested = <DateTime>[];
+      final delayedDaily = Completer<Object?>();
+      final delayedPeriod = Completer<Object?>();
+
+      Map<String, Object> usage(int bytes, String app) => {
+        'total': bytes,
+        'apps': [{'name': app, 'bytes': bytes}],
+      };
+      final week = {
+        'total': {'mobile': 70, 'wifi': 80},
+        'days': List.generate(7, (_) => {'mobile': 10, 'wifi': 20}),
+      };
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'hasAccess':
+            return true;
+          case 'daily':
+            final bounds = (call.arguments as Map)['bounds'] as List;
+            final date = DateTime.fromMillisecondsSinceEpoch(bounds.first as int);
+            requested.add(date);
+            if (date == yesterday) return delayedDaily.future;
+            final row = date == latest ? usage(30, 'Latest app') : usage(10, 'Today app');
+            return {'wifi': row, 'mobile': row};
+          case 'weekly':
+            final bounds = (call.arguments as Map)['bounds'] as List;
+            if (bounds.first == mondayOf(latest).millisecondsSinceEpoch) {
+              return delayedPeriod.future;
+            }
+            return week;
+          default:
+            return null;
+        }
+      });
+
+      await tester.pumpWidget(const TrackerApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(networkLabel));
+      await tester.pumpAndSettle();
+      requested.clear();
+
+      await tester.tap(find.text('Yesterday'));
+      await tester.pump();
+      expect(find.text(heading), findsOneWidget);
+      expect(find.text('Today app'), findsNothing);
+      await tester.tap(find.text('Today'));
+      await tester.pumpAndSettle();
+      expect(requested, isEmpty);
+      expect(find.text('Today app'), findsOneWidget);
+
+      await tester.tap(find.text('Yesterday'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(requested, [yesterday]);
+      await tester.tap(find.byTooltip('Previous week'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(requested, [yesterday]);
+      expect(find.byTooltip('Pick date'), findsOneWidget);
+      expect(find.text(heading), findsOneWidget);
+
+      final stale = usage(20, 'Stale app');
+      delayedDaily.complete({'wifi': stale, 'mobile': stale});
+      await tester.pump();
+      await tester.pump();
+      expect(requested, [yesterday, latest]);
+      expect(find.text('Stale app'), findsNothing);
+      expect(find.text('Latest app'), findsOneWidget);
+      expect(find.text('— · Weekly total'), findsOneWidget);
+
+      delayedPeriod.complete(week);
+      await tester.pumpAndSettle();
+      expect(find.text('Latest app'), findsOneWidget);
+      await tester.tap(find.text('Today'));
+      await tester.pumpAndSettle();
+      expect(requested, [yesterday, latest]);
+      expect(find.text('Today app'), findsOneWidget);
+    });
+  }
 
   testWidgets('keeps Wi-Fi available without Android 7–9 Phone permission', (tester) async {
     tester.view.physicalSize = const Size(390, 820);

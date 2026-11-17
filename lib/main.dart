@@ -239,9 +239,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   String? error;
   int goal = 0;
   int request = 0;
-  Map<Network, NetworkUsage?>? dailyData;
+  final dailyCache = <DateTime, Map<Network, NetworkUsage?>>{};
   UsagePeriod? periodData;
-  DateTime? loadedPeriod;
+  (DateTime, bool)? loadedPeriod;
+  Timer? selectionDebounce;
+  int? queuedSelection;
+  bool loadingSelection = false;
+  String? selectionError;
 
   MonitorSettings monitor = const MonitorSettings();
   String filter = 'all';
@@ -250,6 +254,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   bool get mobile => network == Network.mobile;
   String get networkName => network.label(context);
+  Map<Network, NetworkUsage?>? get dailyData => dailyCache[details ? day : today];
+  (DateTime, bool) get selectedPeriod => (periodStart, monthly);
+  UsagePeriod? get currentPeriod => loadedPeriod == selectedPeriod ? periodData : null;
   DateTime get earliest => calendarDay(mondayOf(today), -364);
   DateTime get periodStart {
     final selected = details ? day : today;
@@ -268,6 +275,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    selectionDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     usage.onWidgetNavigation(null);
     super.dispose();
@@ -278,8 +286,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) load();
   }
 
-  Future<void> load({bool reusePeriod = false}) async {
+  Future<void> load() async {
     if (!mounted) return;
+    selectionDebounce?.cancel();
+    queuedSelection = null;
     final ticket = ++request;
     setState(() {
       final now = calendarDay(DateTime.now());
@@ -288,6 +298,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       if (day.isBefore(earliest)) day = earliest;
       busy = true;
       error = null;
+      selectionError = null;
+      dailyCache.clear();
+      periodData = null;
+      loadedPeriod = null;
     });
     try {
       final openedNetwork = await usage.widgetNetwork();
@@ -315,21 +329,19 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         setState(() {
           hasAccess = false;
           busy = false;
-          dailyData = null;
-          periodData = null;
-          loadedPeriod = null;
         });
         return;
       }
       final selected = details ? day : today;
       final start = periodStart;
       final month = details && monthly;
-      final cached = reusePeriod && loadedPeriod == start ? periodData : null;
       final phonePermission = await usage.needsPhonePermission();
       if (!mounted || ticket != request) return;
       final data = await usage.daily(selected);
-      final period = details ? cached ??
+      if (!mounted || ticket != request) return;
+      final period = details ?
           (month ? await usage.monthly(start) : await usage.weekly(start)) : null;
+      if (!mounted || ticket != request) return;
       final savedGoal = await usage.goal();
       final savedMonitor = await usage.settings();
       if (!mounted || ticket != request) return;
@@ -337,9 +349,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         hasAccess = true;
         needsPhonePermission = phonePermission;
         busy = false;
-        dailyData = data;
+        dailyCache[selected] = data;
         periodData = period;
-        loadedPeriod = period == null ? null : start;
+        loadedPeriod = period == null ? null : (start, month);
         goal = savedGoal;
         monitor = savedMonitor;
       });
@@ -386,9 +398,73 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   }
 
   void selectDay(DateTime value) {
-    if (value == day || value.isBefore(earliest) || value.isAfter(today)) return;
+    if (!details || value == day || value.isBefore(earliest) || value.isAfter(today)) return;
     setState(() => day = value);
-    load(reusePeriod: true);
+    if (busy) {
+      unawaited(load());
+    } else {
+      scheduleSelection();
+    }
+  }
+
+  void scheduleSelection() {
+    final ticket = ++request;
+    selectionDebounce?.cancel();
+    queuedSelection = null;
+    setState(() => selectionError = null);
+    if (dailyData != null && currentPeriod != null) return;
+    selectionDebounce = Timer(const Duration(milliseconds: 120), () {
+      queuedSelection = ticket;
+      unawaited(loadSelection());
+    });
+  }
+
+  Future<void> loadSelection() async {
+    final ticket = queuedSelection;
+    if (loadingSelection || ticket == null || ticket != request || !mounted) return;
+    // Android serializes usage queries. Keep only the newest selection waiting.
+    queuedSelection = null;
+    loadingSelection = true;
+    final selected = day;
+    final (start, month) = selectedPeriod;
+    try {
+      if (dailyData == null) {
+        final data = await usage.daily(selected);
+        if (!mounted || ticket != request) return;
+        setState(() {
+          if (dailyCache.length >= 14) dailyCache.remove(dailyCache.keys.first);
+          dailyCache[selected] = data;
+        });
+      }
+      if (currentPeriod == null) {
+        final period = month ? await usage.monthly(start) : await usage.weekly(start);
+        if (!mounted || ticket != request) return;
+        setState(() {
+          periodData = period;
+          loadedPeriod = (start, month);
+        });
+      }
+    } on PlatformException catch (exception) {
+      if (!mounted || ticket != request) return;
+      setState(() {
+        if (exception.code == 'permission') {
+          hasAccess = false;
+          dailyCache.clear();
+          periodData = null;
+          loadedPeriod = null;
+        } else {
+          selectionError = exception.message ??
+              tr(context, 'Could not read usage.', 'مقدرناش نحمّل الاستهلاك.');
+        }
+      });
+    } on MissingPluginException {
+      if (!mounted || ticket != request) return;
+      setState(() => selectionError =
+          tr(context, 'Usage tracking is available on Android.', 'متابعة الاستهلاك متاحة على أندرويد.'));
+    } finally {
+      loadingSelection = false;
+      if (queuedSelection != null) unawaited(loadSelection());
+    }
   }
 
   void movePeriod(int direction) {
@@ -651,7 +727,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   ));
 
   void openAppHighlights() {
-    final data = dailyData?[network];
+    final daily = dailyData;
+    if (daily == null) return;
+    final data = daily[network];
+    final selected = day;
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -672,7 +751,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                     '${(app.bytes * 100 / data.appTotal).toStringAsFixed(1)}%'}'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  openApp(app, day);
+                  openApp(app, selected);
                 },
               ),
             const SizedBox(height: 12),
@@ -681,7 +760,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             if (monitor.pinned.isEmpty)
               Text(tr(context, 'Pin an app from its usage history.', 'ثبّت أي تطبيق من صفحة سجل استهلاكه.')),
             for (final pin in monitor.pinned)
-              pinnedTile(sheetContext, pin, data),
+              pinnedTile(sheetContext, pin, data, daily, selected),
           ],
         ),
       )),
@@ -714,7 +793,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           if (!details || (hasAccess && !busy && error == null))
             IconButton(
               tooltip: details ? tr(context, 'App highlights', 'أهم التطبيقات') : tr(context, 'Settings', 'الإعدادات'),
-              onPressed: details ? openAppHighlights : showSettings,
+              onPressed: !details ? showSettings : dailyData == null ? null : openAppHighlights,
               icon: Icon(details ? Icons.star_outline : Icons.settings),
             ),
         ],
@@ -788,9 +867,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       ],
     ),
   );
-
-  List<int?> get series => periodData!.days.map((day) => day?.forNetwork(network)).toList();
-  int? get periodTotal => periodData?.total.forNetwork(network);
 
   Widget overview(BuildContext context) {
     final theme = Theme.of(context);
@@ -876,9 +952,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     ));
   }
 
-  Widget pinnedTile(BuildContext context, String pin, NetworkUsage? data) {
+  Widget pinnedTile(BuildContext context, String pin, NetworkUsage? data,
+      Map<Network, NetworkUsage?> daily, DateTime selected) {
     final selectedApp = data?.apps.where((app) => app.identity == pin).firstOrNull;
-    final recentApp = selectedApp ?? dailyData!.values
+    final recentApp = selectedApp ?? daily.values
         .expand((value) => value?.apps ?? <AppUsage>[])
         .where((app) => app.identity == pin).firstOrNull;
     return ListTile(
@@ -889,7 +966,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       trailing: Text(data == null ? '—' : formatBytes(selectedApp?.bytes ?? 0)),
       onTap: recentApp == null ? null : () {
         Navigator.pop(context);
-        openApp(recentApp, day);
+        openApp(recentApp, selected);
       },
       onLongPress: () {
         Navigator.pop(context);
@@ -901,12 +978,16 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   Widget detailsView(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final accent = mobile ? scheme.secondary : scheme.primary;
-    final data = dailyData![network];
-    final amounts = series;
-    final total = periodTotal;
+    final daily = dailyData;
+    final data = daily?[network];
+    final period = currentPeriod;
+    final total = period?.total.forNetwork(network);
     final cutoff = monthly ? DateTime(day.year, day.month + 1) : calendarDay(periodStart, 7);
     final lastDay = calendarDay(cutoff, -1);
+    final amounts = period?.days.map((day) => day?.forNetwork(network)).toList() ??
+        List<int?>.filled(monthly ? lastDay.day : 7, null);
     final displayedEnd = lastDay.isAfter(today) ? today : lastDay;
+    final updating = selectionError == null && (daily == null || period == null);
     final needle = query.trim().toLowerCase();
     final apps = (data?.apps ?? <AppUsage>[]).where((app) =>
         (filter == 'all' || (filter == 'system' && app.system == true) ||
@@ -946,7 +1027,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                       Expanded(child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('${usageLabel(total)} · ${monthly ? tr(context, 'Monthly total', 'إجمالي الشهر') : tr(context, 'Weekly total', 'إجمالي الأسبوع')}',
+                          Text('${period == null ? '—' : usageLabel(total)} · ${monthly ? tr(context, 'Monthly total', 'إجمالي الشهر') : tr(context, 'Weekly total', 'إجمالي الأسبوع')}',
                             style: TextStyle(fontWeight: FontWeight.w700, color: accent)),
                           Text('${dates.formatShortDate(periodStart)} – ${dates.formatShortDate(displayedEnd)}',
                             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
@@ -989,8 +1070,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                         children: [
                           Text(dates.formatMediumDate(day), textAlign: TextAlign.center,
                             style: const TextStyle(fontWeight: FontWeight.w800)),
-                          Text(usageLabel(data?.total), style: TextStyle(color: scheme.onSurfaceVariant),
-                            semanticsLabel: tr(context, 'Device total: ${usageLabel(data?.total)}',
+                          Text(daily == null ? '—' : usageLabel(data?.total),
+                            style: TextStyle(color: scheme.onSurfaceVariant),
+                            semanticsLabel: daily == null ? null : tr(context, 'Device total: ${usageLabel(data?.total)}',
                               'إجمالي الجهاز: ${usageLabel(data?.total)}')),
                         ],
                       )),
@@ -1002,6 +1084,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                             ? () => movePeriod(1) : null,
                       ),
                     ],
+                  ),
+                  SizedBox(
+                    height: 2,
+                    child: updating ? LinearProgressIndicator(
+                      minHeight: 2,
+                      semanticsLabel: tr(context, 'Updating usage', 'بنحدّث الاستهلاك'),
+                    ) : null,
                   ),
                   PeriodChart(
                     start: periodStart, day: day, amounts: amounts,
@@ -1022,6 +1111,15 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             const SizedBox(height: 10),
             Text(tr(context, '$networkName usage by app', 'استهلاك التطبيقات · $networkName'),
               style: Theme.of(context).textTheme.titleMedium),
+            if (selectionError case final String message)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(message),
+                trailing: TextButton(
+                  onPressed: scheduleSelection,
+                  child: Text(tr(context, 'Retry', 'جرّب تاني')),
+                ),
+              ),
             if (data != null && data.apps.isNotEmpty) ...[
               Text(tr(context, 'All recorded apps: ${formatBytes(data.appTotal)}',
                 'إجمالي التطبيقات المسجّلة: ${formatBytes(data.appTotal)}'),
@@ -1055,9 +1153,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               ]),
               if (apps.isEmpty) Text(tr(context, 'No matching apps', 'مفيش تطبيقات مطابقة')),
             ],
-            if (data == null)
+            if (daily != null && data == null)
               mobileAccessNotice()
-            else if (data.apps.isEmpty)
+            else if (data != null && data.apps.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 child: Text(tr(context, 'Android has no per-app records for this date and network.', 'أندرويد معندوش سجلات للتطبيقات على الشبكة دي في التاريخ ده.'),
@@ -1075,7 +1173,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     onSelected: (_) {
       if (selected) return;
       setState(() => monthly = !monthly);
-      load();
+      scheduleSelection();
     },
   );
 }
