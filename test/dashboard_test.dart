@@ -171,10 +171,10 @@ void main() {
     await tester.pumpAndSettle();
     final yesterday = calendarDay(today, -1);
     expect(tester.widget<PeriodChart>(find.byType(PeriodChart)).day, yesterday);
-    expect(dailyWindows, contains([
+    expect(dailyWindows, contains(equals([
       yesterday.millisecondsSinceEpoch,
       calendarDay(today).millisecondsSinceEpoch,
-    ]));
+    ])));
     expect(tester.takeException(), isNull);
   });
 
