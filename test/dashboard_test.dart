@@ -264,6 +264,72 @@ void main() {
     });
   }
 
+  testWidgets('preloads recent days and shares an in-flight read with date selection', (tester) async {
+    tester.view.physicalSize = const Size(390, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final today = calendarDay(DateTime.now());
+    final yesterday = calendarDay(today, -1);
+    final requested = <DateTime>[];
+    final backgroundRead = Completer<Object?>();
+
+    Map<String, Object> usage(String app) {
+      final network = {
+        'total': 20,
+        'apps': [{'name': app, 'bytes': 20}],
+      };
+      return {'wifi': network, 'mobile': network};
+    }
+
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'hasAccess':
+          return true;
+        case 'daily':
+          final bounds = (call.arguments as Map)['bounds'] as List;
+          final date = DateTime.fromMillisecondsSinceEpoch(bounds.first as int);
+          requested.add(date);
+          if (date == yesterday) return backgroundRead.future;
+          return usage('Today app');
+        case 'weekly':
+          return {
+            'total': {'mobile': 140, 'wifi': 140},
+            'days': List.generate(7, (_) => {'mobile': 20, 'wifi': 20}),
+          };
+        default:
+          return null;
+      }
+    });
+
+    await tester.pumpWidget(const TrackerApp());
+    await tester.pumpAndSettle();
+    expect(requested, [today]);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(requested, [today, yesterday]);
+    expect(find.text('Today’s usage'), findsOneWidget);
+
+    await tester.tap(find.text('Analyze Wi-Fi'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Yesterday'));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(requested, [today, yesterday]);
+    expect(find.byTooltip('Pick date'), findsOneWidget);
+    backgroundRead.complete(usage('Prefetched app'));
+    await tester.pumpAndSettle();
+    expect(find.text('Prefetched app'), findsOneWidget);
+    expect(requested, [today, yesterday]);
+
+    await tester.tap(find.byTooltip('Back to overview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Analyze mobile data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Yesterday'));
+    await tester.pumpAndSettle();
+    expect(find.text('Prefetched app'), findsOneWidget);
+    expect(requested, [today, yesterday]);
+  });
+
   testWidgets('keeps Wi-Fi available without Android 7–9 Phone permission', (tester) async {
     tester.view.physicalSize = const Size(390, 820);
     tester.view.devicePixelRatio = 1;

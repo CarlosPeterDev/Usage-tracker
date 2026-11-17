@@ -225,6 +225,8 @@ class Dashboard extends StatefulWidget {
   State<Dashboard> createState() => _DashboardState();
 }
 
+typedef _DailyUsage = Map<Network, NetworkUsage?>;
+
 class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   final usage = UsageService();
   DateTime today = calendarDay(DateTime.now());
@@ -239,9 +241,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   String? error;
   int goal = 0;
   int request = 0;
-  final dailyCache = <DateTime, Map<Network, NetworkUsage?>>{};
-  UsagePeriod? periodData;
-  (DateTime, bool)? loadedPeriod;
+  final dailyCache = <DateTime, _DailyUsage>{};
+  final periodCache = <(DateTime, bool), UsagePeriod>{};
+  int cacheRevision = 0;
+  bool foreground = true;
+  Timer? prefetchTimer;
+  (DateTime, int, Future<_DailyUsage>)? prefetchRead;
   Timer? selectionDebounce;
   int? queuedSelection;
   bool loadingSelection = false;
@@ -254,9 +259,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   bool get mobile => network == Network.mobile;
   String get networkName => network.label(context);
-  Map<Network, NetworkUsage?>? get dailyData => dailyCache[details ? day : today];
+  _DailyUsage? get dailyData => dailyCache[details ? day : today];
   (DateTime, bool) get selectedPeriod => (periodStart, monthly);
-  UsagePeriod? get currentPeriod => loadedPeriod == selectedPeriod ? periodData : null;
+  UsagePeriod? get currentPeriod => periodCache[selectedPeriod];
   DateTime get earliest => calendarDay(mondayOf(today), -364);
   DateTime get periodStart {
     final selected = details ? day : today;
@@ -276,6 +281,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   @override
   void dispose() {
     selectionDebounce?.cancel();
+    prefetchTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     usage.onWidgetNavigation(null);
     super.dispose();
@@ -283,12 +289,92 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) load();
+    foreground = state == AppLifecycleState.resumed;
+    if (foreground) {
+      unawaited(load());
+    } else {
+      prefetchTimer?.cancel();
+    }
+  }
+
+  void clearUsageCache() {
+    cacheRevision++;
+    dailyCache.clear();
+    periodCache.clear();
+  }
+
+  void rememberDay(DateTime date, _DailyUsage data) {
+    dailyCache.remove(date);
+    dailyCache[date] = data;
+    if (dailyCache.length > 48) {
+      dailyCache.remove(dailyCache.keys.firstWhere((key) => key != today && key != day));
+    }
+  }
+
+  void rememberPeriod((DateTime, bool) key, UsagePeriod period) {
+    periodCache[key] = period;
+    if (periodCache.length > 6) periodCache.remove(periodCache.keys.first);
+  }
+
+  Iterable<DateTime> prefetchDates() sync* {
+    final anchor = details ? day : today;
+    final start = details ? calendarDay(periodStart, -1) : calendarDay(today, -6);
+    final end = !details ? today : monthly
+        ? DateTime(day.year, day.month + 1)
+        : calendarDay(periodStart, 7);
+    for (var offset = 1; offset <= 32; offset++) {
+      final previous = calendarDay(anchor, -offset);
+      final next = calendarDay(anchor, offset);
+      if (previous.isBefore(start) && next.isAfter(end)) break;
+      if (!previous.isBefore(start) && !previous.isBefore(earliest)) yield previous;
+      if (!next.isAfter(end) && !next.isAfter(today)) yield next;
+    }
+  }
+
+  void schedulePrefetch() {
+    prefetchTimer?.cancel();
+    if (!mounted || !foreground || !hasAccess || busy || error != null ||
+        selectionError != null || prefetchRead != null || loadingSelection ||
+        queuedSelection != null || selectionDebounce?.isActive == true) return;
+    final target = prefetchDates().where((date) => !dailyCache.containsKey(date)).firstOrNull;
+    if (target != null) {
+      prefetchTimer = Timer(const Duration(milliseconds: 650), () {
+        unawaited(prefetchDay(target));
+      });
+    }
+  }
+
+  Future<void> prefetchDay(DateTime target) async {
+    final revision = cacheRevision;
+    final read = usage.daily(target);
+    prefetchRead = (target, revision, read);
+    var completed = false;
+    try {
+      final data = await read;
+      if (mounted && revision == cacheRevision) rememberDay(target, data);
+      completed = true;
+    } on PlatformException {
+      // Background failures do not replace the visible selection.
+    } on MissingPluginException {
+      // Usage queries are only supported on Android.
+    } finally {
+      prefetchRead = null;
+      if (completed || revision != cacheRevision) schedulePrefetch();
+    }
+  }
+
+  Future<_DailyUsage> readSelectedDay(DateTime selected) {
+    final pending = prefetchRead;
+    if (pending != null && pending.$1 == selected && pending.$2 == cacheRevision) {
+      return pending.$3;
+    }
+    return usage.daily(selected);
   }
 
   Future<void> load() async {
     if (!mounted) return;
     selectionDebounce?.cancel();
+    prefetchTimer?.cancel();
     queuedSelection = null;
     final ticket = ++request;
     setState(() {
@@ -299,9 +385,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       busy = true;
       error = null;
       selectionError = null;
-      dailyCache.clear();
-      periodData = null;
-      loadedPeriod = null;
+      clearUsageCache();
     });
     try {
       final openedNetwork = await usage.widgetNetwork();
@@ -349,12 +433,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         hasAccess = true;
         needsPhonePermission = phonePermission;
         busy = false;
-        dailyCache[selected] = data;
-        periodData = period;
-        loadedPeriod = period == null ? null : (start, month);
+        rememberDay(selected, data);
+        if (period != null) rememberPeriod((start, month), period);
         goal = savedGoal;
         monitor = savedMonitor;
       });
+      schedulePrefetch();
     } on PlatformException catch (exception) {
       if (!mounted || ticket != request) return;
       setState(() {
@@ -389,12 +473,20 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       filter = 'all';
       sort = 'usage';
     });
-    load();
+    scheduleSelection();
   }
 
   void closeDetails() {
     setState(() => details = false);
-    load();
+    if (!busy && hasAccess && error == null && dailyData != null) {
+      request++;
+      selectionDebounce?.cancel();
+      queuedSelection = null;
+      selectionError = null;
+      schedulePrefetch();
+    } else {
+      unawaited(load());
+    }
   }
 
   void selectDay(DateTime value) {
@@ -410,9 +502,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   void scheduleSelection() {
     final ticket = ++request;
     selectionDebounce?.cancel();
+    prefetchTimer?.cancel();
     queuedSelection = null;
     setState(() => selectionError = null);
-    if (dailyData != null && currentPeriod != null) return;
+    if (dailyData != null && currentPeriod != null) {
+      schedulePrefetch();
+      return;
+    }
     selectionDebounce = Timer(const Duration(milliseconds: 120), () {
       queuedSelection = ticket;
       unawaited(loadSelection());
@@ -429,29 +525,21 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     final (start, month) = selectedPeriod;
     try {
       if (dailyData == null) {
-        final data = await usage.daily(selected);
+        final data = await readSelectedDay(selected);
         if (!mounted || ticket != request) return;
-        setState(() {
-          if (dailyCache.length >= 14) dailyCache.remove(dailyCache.keys.first);
-          dailyCache[selected] = data;
-        });
+        setState(() => rememberDay(selected, data));
       }
       if (currentPeriod == null) {
         final period = month ? await usage.monthly(start) : await usage.weekly(start);
         if (!mounted || ticket != request) return;
-        setState(() {
-          periodData = period;
-          loadedPeriod = (start, month);
-        });
+        setState(() => rememberPeriod((start, month), period));
       }
     } on PlatformException catch (exception) {
       if (!mounted || ticket != request) return;
       setState(() {
         if (exception.code == 'permission') {
           hasAccess = false;
-          dailyCache.clear();
-          periodData = null;
-          loadedPeriod = null;
+          clearUsageCache();
         } else {
           selectionError = exception.message ??
               tr(context, 'Could not read usage.', 'مقدرناش نحمّل الاستهلاك.');
@@ -463,7 +551,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           tr(context, 'Usage tracking is available on Android.', 'متابعة الاستهلاك متاحة على أندرويد.'));
     } finally {
       loadingSelection = false;
-      if (queuedSelection != null) unawaited(loadSelection());
+      if (queuedSelection != null) {
+        unawaited(loadSelection());
+      } else {
+        schedulePrefetch();
+      }
     }
   }
 
