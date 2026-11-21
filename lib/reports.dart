@@ -36,6 +36,8 @@ class _PlanEditorState extends State<PlanEditor> {
   late final day = TextEditingController(text: '${widget.settings.renewal}');
   late bool thresholds = widget.settings.thresholds;
   late bool spikes = widget.settings.spikes;
+  late final custom = <int>{...widget.settings.customThresholds};
+  final customInput = TextEditingController();
   late bool useMb;
   String? error;
 
@@ -73,6 +75,7 @@ class _PlanEditorState extends State<PlanEditor> {
   void dispose() {
     size.dispose();
     day.dispose();
+    customInput.dispose();
     super.dispose();
   }
 
@@ -117,6 +120,22 @@ class _PlanEditorState extends State<PlanEditor> {
           value: thresholds, onChanged: (value) => setState(() => thresholds = value),
           title: Text(tr(context, 'Alerts at 50%, 80% and 100%', 'تنبيهات عند ٥٠٪ و٨٠٪ و١٠٠٪')),
         ),
+        Text(tr(context, 'Custom plan alerts (%)', 'تنبيهات مخصصة من الباقة (%)')),
+        Wrap(spacing: 6, children: [for (final percent in (custom.toList()..sort()))
+          InputChip(label: Text('$percent%'), onDeleted: () => setState(() => custom.remove(percent))),
+        ]),
+        Row(children: [
+          Expanded(child: TextField(controller: customInput, keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: tr(context, 'Percent (1–100)', 'النسبة (١–١٠٠)')))),
+          TextButton(onPressed: () {
+            final value = int.tryParse(customInput.text.trim());
+            if (value == null || value < 1 || value > 100) {
+              setState(() => error = tr(context, 'Enter a percentage from 1 to 100.', 'اكتب نسبة من ١ إلى ١٠٠.'));
+              return;
+            }
+            setState(() { custom.add(value); customInput.clear(); error = null; });
+          }, child: Text(tr(context, 'Add', 'إضافة'))),
+        ]),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           value: spikes, onChanged: (value) => setState(() => spikes = value),
@@ -145,6 +164,7 @@ class _PlanEditorState extends State<PlanEditor> {
           Navigator.pop(context, MonitorSettings(
             limit: bytes, renewal: renewal,
             thresholds: thresholds, spikes: spikes, pinned: widget.settings.pinned,
+            customThresholds: custom.toList()..sort(),
           ));
         },
         child: Text(tr(context, 'Save', 'حفظ')),
