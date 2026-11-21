@@ -7,6 +7,7 @@ import 'package:flutter/services.dart'
 
 import 'feature_language.dart';
 import 'reports.dart';
+import 'privacy_policy_page.dart';
 import 'test_ads.dart';
 import 'tracker_ui.dart';
 import 'usage.dart';
@@ -768,6 +769,16 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               onTap: () {
                 Navigator.pop(sheetContext);
                 load();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.shield_outlined),
+              title: Text(tr(context, 'Privacy & Data', 'الخصوصية والبيانات')),
+              subtitle: Text(tr(context, 'Permissions, local data and advertising', 'الأذونات والبيانات المحلية والإعلانات')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => const PrivacyPolicyPage()));
               },
             ),
             ListTile(
