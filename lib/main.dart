@@ -663,8 +663,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       context: context, builder: (_) => PlanEditor(settings: monitor),
     );
     if (next == null || !mounted) return;
-    if ((next.thresholds || next.spikes) && !await usage.notificationPermission()) {
-      next = MonitorSettings(limit: next.limit, renewal: next.renewal, pinned: next.pinned, customThresholds: next.customThresholds);
+    if ((next.thresholds || next.spikes || next.customThresholds.isNotEmpty) && !await usage.notificationPermission()) {
+      next = MonitorSettings(limit: next.limit, renewal: next.renewal, pinned: next.pinned);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(tr(context, 'Notification permission is off.', 'إذن الإشعارات مقفول.')),
       ));
