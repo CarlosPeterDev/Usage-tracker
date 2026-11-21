@@ -105,7 +105,13 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     try { seen = await privacyChannel.invokeMethod<bool>('privacySeen') ?? false; } catch (_) {}
     if (!mounted) return;
     setState(() { privacyChecked = true; privacyPending = !seen; });
-    if (seen && widget.ads != null) prepareLaunchAd(widget.ads!);
+    if (seen && widget.ads != null) {
+      bool returning = false;
+      try { returning = await privacyChannel.invokeMethod<bool>('returningLaunch') ?? false; } catch (_) {}
+      if (returning && mounted && !dashboardReady && !privacyPending) {
+        unawaited(prepareLaunchAd(widget.ads!));
+      }
+    }
   }
 
   Future<void> completePrivacy() async {
@@ -123,7 +129,7 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     try {
       if (!mounted || dashboardReady || privacyPending) return;
       setState(() => loadingScreen = true);
-      startupDeadline = Timer(const Duration(seconds: 2), closeLoadingScreen);
+      startupDeadline = Timer(const Duration(seconds: 3), closeLoadingScreen);
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || !loadingScreen) return;
       ad = await ads.loadLaunchAd();
