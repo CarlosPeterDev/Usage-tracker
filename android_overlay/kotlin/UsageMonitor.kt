@@ -114,7 +114,7 @@ internal object UsageMonitor {
         val settings = config(context)
         val scheduler = context.getSystemService(JobScheduler::class.java) ?: return
         if (widgetIds(context).isEmpty() && !settings.optBoolean("thresholds") &&
-            !settings.optBoolean("spikes")) {
+            !settings.optBoolean("spikes") && (settings.optJSONArray("customThresholds")?.length() ?: 0) == 0) {
             scheduler.cancel(jobId)
             return
         }
@@ -154,7 +154,7 @@ internal object UsageMonitor {
             .filterValues { it.isNotEmpty() }
         val mobileNeeded = notify || installed.keys.any { it != WidgetNetwork.wifi }
         val today = if (allowed && mobileNeeded) runCatching { mobileTotal(context, day.timeInMillis, tomorrow, wholeDay = true) }.getOrNull() else null
-        val used = if (allowed && notify && settings.optBoolean("thresholds") && limit > 0) runCatching { mobileTotal(context, cycle, now) }.getOrNull() else null
+        val used = if (allowed && notify && (settings.optBoolean("thresholds") || (settings.optJSONArray("customThresholds")?.length() ?: 0) > 0) && limit > 0) runCatching { mobileTotal(context, cycle, now) }.getOrNull() else null
         val wifi = if (allowed && installed.keys.any { it != WidgetNetwork.mobile }) runCatching {
             val stats = checkNotNull(context.getSystemService(NetworkStatsManager::class.java))
             val bucket = checkNotNull(stats.querySummaryForDevice(ConnectivityManager.TYPE_WIFI, null, day.timeInMillis, tomorrow))
@@ -184,17 +184,27 @@ internal object UsageMonitor {
         }
         if (!notify || !allowed || !canNotify(context)) return
         val prefs = preferences(context)
-        if (settings.optBoolean("thresholds") && used != null) {
-            val percent = listOf(100, 80, 50).firstOrNull { used >= limit * it / 100 }
-            if (percent != null) {
-                val key = "threshold:$cycle:$limit:$renewal"
-                val last = if (prefs.getString("thresholdKey", "") == key)
-                    prefs.getInt("thresholdLevel", 0) else 0
-                if (percent > last) {
-                    val message = if (ar) "استهلكت ${percent}٪ من باقة الموبايل." else "You reached $percent% of your mobile data plan."
-                    send(context, 4311, message, ar)
-                    prefs.edit().putString("thresholdKey", key).putInt("thresholdLevel", percent).apply()
-                }
+        if (used != null) {
+            val levels = mutableSetOf<Int>()
+            if (settings.optBoolean("thresholds")) levels.addAll(listOf(50, 80, 100))
+            val custom = settings.optJSONArray("customThresholds")
+            if (custom != null) for (index in 0 until custom.length()) {
+                val level = custom.optInt(index, 0)
+                if (level in 1..100) levels.add(level)
+            }
+            val key = "threshold:$cycle:$limit:$renewal"
+            val last = if (prefs.getString("thresholdKey", "") == key)
+                prefs.getInt("thresholdLevel", 0) else 0
+            val crossed = levels.filter { it > last && used >= limit * it / 100 }.sorted()
+            if (crossed.isNotEmpty()) {
+                // One notification per scheduled check, including all thresholds crossed
+                // since the last successful check.
+                val message = if (ar)
+                    "استهلكت ${crossed.joinToString("٪، ")}٪ من باقة الموبايل."
+                    else "You reached ${crossed.joinToString("%, ")}% of your mobile data plan."
+                send(context, 4311, message, ar)
+                prefs.edit().putString("thresholdKey", key)
+                    .putInt("thresholdLevel", crossed.last()).apply()
             }
         }
         if (settings.optBoolean("spikes") && today != null &&
