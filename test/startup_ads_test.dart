@@ -98,7 +98,7 @@ void main() {
     expect(ad.disposed, isTrue);
   });
 
-  testWidgets('ends the ad window at two seconds and skips late ads', (tester) async {
+  testWidgets('ends the ad window at three seconds and skips late ads', (tester) async {
     final ads = FakeAds();
     final access = Completer<bool>();
     mockStartup(returning: true, hasAccess: access.future);
@@ -106,7 +106,7 @@ void main() {
     await tester.pumpWidget(TrackerApp(ads: ads));
     await tester.pump();
     expect(loading, findsOneWidget);
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 3));
     expect(loading, findsNothing);
 
     final ad = FakeLaunchAd();
