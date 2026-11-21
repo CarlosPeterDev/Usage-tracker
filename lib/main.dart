@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart'
-    show MissingPluginException, PlatformException, SystemUiOverlayStyle;
+    show MethodChannel, MissingPluginException, PlatformException, SystemUiOverlayStyle;
 
 import 'feature_language.dart';
 import 'reports.dart';
@@ -58,7 +58,7 @@ class TrackerApp extends StatefulWidget {
 class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
   final usage = UsageService();
   ThemeMode mode = ThemeMode.system;
-  String language = 'en';
+  String language = WidgetsBinding.instance.platformDispatcher.locale.languageCode == 'ar' ? 'ar' : 'en';
   int appearanceRevision = 0;
   Timer? startupDeadline;
   bool loadingScreen = false;
@@ -98,12 +98,24 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     if (!showingAd) closeLoadingScreen();
   }
 
+  static const privacyChannel = MethodChannel('data_usage_tracker/usage');
+
   Future<void> checkFirstLaunch() async {
-    bool returning = true;
-    try { returning = await usage.returningLaunch(); } catch (_) {}
+    bool seen = false;
+    try { seen = await privacyChannel.invokeMethod<bool>('privacySeen') ?? false; } catch (_) {}
     if (!mounted) return;
-    setState(() { privacyChecked = true; privacyPending = !returning; });
-    if (returning && widget.ads != null) prepareLaunchAd(widget.ads!);
+    setState(() { privacyChecked = true; privacyPending = !seen; });
+    if (seen && widget.ads != null) prepareLaunchAd(widget.ads!);
+  }
+
+  Future<void> completePrivacy() async {
+    try {
+      final saved = await privacyChannel.invokeMethod<bool>('markPrivacySeen');
+      if (saved != true) return;
+      if (mounted) setState(() => privacyPending = false);
+    } catch (_) {
+      // Keep the notice visible if acknowledgement could not be saved.
+    }
   }
 
   Future<void> prepareLaunchAd(TrackerAds ads) async {
@@ -182,9 +194,7 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     home: !privacyChecked
       ? const Scaffold(body: Center(child: CircularProgressIndicator()))
       : privacyPending
-      ? PrivacyPolicyPage(firstLaunch: true, onContinue: () {
-          setState(() => privacyPending = false);
-        })
+      ? PrivacyPolicyPage(firstLaunch: true, onContinue: completePrivacy)
       : Stack(
       fit: StackFit.expand,
       children: [
