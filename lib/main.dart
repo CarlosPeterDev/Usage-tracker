@@ -1413,10 +1413,39 @@ class GoalDialog extends StatefulWidget {
 }
 
 class _GoalDialogState extends State<GoalDialog> {
-  late final controller = TextEditingController(
-    text: widget.initialBytes == 0 ? '' : (widget.initialBytes / 1000000000).toString(),
-  );
+  late final controller = TextEditingController();
+  late bool useMb;
   String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    final bytes = widget.initialBytes;
+    useMb = bytes > 0 && bytes < 1000000000;
+    if (bytes == 0) {
+      controller.text = '';
+    } else if (useMb) {
+      controller.text = (bytes / 1000000).toStringAsFixed(0);
+    } else {
+      controller.text = (bytes / 1000000000).toString();
+    }
+  }
+
+  void _onUnitChanged(bool mb) {
+    if (mb == useMb) return;
+    final raw = controller.text.trim().replaceAll(',', '.');
+    final value = double.tryParse(raw) ?? 0;
+    setState(() {
+      final wasMb = useMb;
+      useMb = mb;
+      if (value > 0) {
+        final bytes = wasMb ? value * 1000000 : value * 1000000000;
+        controller.text = useMb
+            ? (bytes / 1000000).toStringAsFixed(0)
+            : (bytes / 1000000000).toString();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -1427,11 +1456,36 @@ class _GoalDialogState extends State<GoalDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-    content: TextField(
-      controller: controller,
-      autofocus: true,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(labelText: tr(context, 'Limit (GB)', 'الحد (جيجابايت)'), errorText: error),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: tr(context, useMb ? 'Limit (MB)' : 'Limit (GB)',
+                    useMb ? 'الحد (ميجابايت)' : 'الحد (جيجابايت)'),
+                  errorText: error,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('GB')),
+                ButtonSegment(value: true, label: Text('MB')),
+              ],
+              selected: {useMb},
+              onSelectionChanged: (set) => _onUnitChanged(set.first),
+            ),
+          ],
+        ),
+      ],
     ),
     actions: [
       if (widget.initialBytes > 0)
@@ -1439,12 +1493,18 @@ class _GoalDialogState extends State<GoalDialog> {
       TextButton(onPressed: () => Navigator.pop(context), child: Text(tr(context, 'Cancel', 'إلغاء'))),
       FilledButton(
         onPressed: () {
-          final gb = double.tryParse(controller.text.trim().replaceAll(',', '.'));
-          if (gb == null || !gb.isFinite || gb < 0.001 || gb > 100000) {
-            setState(() => error = tr(context, 'Enter 0.001–100000 GB.', 'اكتب قيمة من ٠٫٠٠١ لـ١٠٠٠٠٠ جيجابايت.'));
+          final raw = controller.text.trim().replaceAll(',', '.');
+          final value = double.tryParse(raw);
+          final multiplier = useMb ? 1000000 : 1000000000;
+          final minValue = useMb ? 1.0 : 0.001;
+          final maxValue = useMb ? 100000000.0 : 100000.0;
+          if (value == null || !value.isFinite || value < minValue || value > maxValue) {
+            setState(() => error = tr(context,
+              useMb ? 'Enter 1–100000000 MB.' : 'Enter 0.001–100000 GB.',
+              useMb ? 'اكتب قيمة من ١ لـ١٠٠٠٠٠٠٠٠ ميجابايت.' : 'اكتب قيمة من ٠٫٠٠١ لـ١٠٠٠٠٠ جيجابايت.'));
             return;
           }
-          Navigator.pop(context, (gb * 1000000000).round());
+          Navigator.pop(context, (value * multiplier).round());
         },
         child: Text(tr(context, 'Save', 'حفظ')),
       ),

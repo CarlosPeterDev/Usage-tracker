@@ -32,13 +32,42 @@ class PlanEditor extends StatefulWidget {
 }
 
 class _PlanEditorState extends State<PlanEditor> {
-  late final size = TextEditingController(
-    text: widget.settings.limit == 0 ? '' : (widget.settings.limit / 1e9).toString(),
-  );
+  late final size = TextEditingController();
   late final day = TextEditingController(text: '${widget.settings.renewal}');
   late bool thresholds = widget.settings.thresholds;
   late bool spikes = widget.settings.spikes;
+  late bool useMb;
   String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    final limit = widget.settings.limit;
+    useMb = limit > 0 && limit < 1000000000;
+    if (limit == 0) {
+      size.text = '';
+    } else if (useMb) {
+      size.text = (limit / 1000000).toStringAsFixed(0);
+    } else {
+      size.text = (limit / 1000000000).toString();
+    }
+  }
+
+  void _onUnitChanged(bool mb) {
+    if (mb == useMb) return;
+    final raw = size.text.trim().replaceAll(',', '.');
+    final value = double.tryParse(raw) ?? 0;
+    setState(() {
+      final wasMb = useMb;
+      useMb = mb;
+      if (value > 0) {
+        final bytes = wasMb ? value * 1000000 : value * 1000000000;
+        size.text = useMb
+            ? (bytes / 1000000).toStringAsFixed(0)
+            : (bytes / 1000000000).toString();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -54,11 +83,30 @@ class _PlanEditorState extends State<PlanEditor> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
-          controller: size,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: tr(context, 'Plan size (GB)', 'حجم الباقة (جيجابايت)')),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: size,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: tr(context, useMb ? 'Plan size (MB)' : 'Plan size (GB)',
+                    useMb ? 'حجم الباقة (ميجابايت)' : 'حجم الباقة (جيجابايت)'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('GB')),
+                ButtonSegment(value: true, label: Text('MB')),
+              ],
+              selected: {useMb},
+              onSelectionChanged: (set) => _onUnitChanged(set.first),
+            ),
+          ],
         ),
+        const SizedBox(height: 8),
         TextField(
           controller: day,
           keyboardType: TextInputType.number,
@@ -82,17 +130,20 @@ class _PlanEditorState extends State<PlanEditor> {
       FilledButton(
         onPressed: () {
           final raw = size.text.trim().replaceAll(',', '.');
-          final gb = raw.isEmpty ? 0.0 : double.tryParse(raw);
+          final value = raw.isEmpty ? 0.0 : double.tryParse(raw);
           final renewal = int.tryParse(day.text);
-          if (gb == null || !gb.isFinite || gb < 0 || gb > 100000 ||
-              renewal == null || renewal < 1 || renewal > 31 || (thresholds && gb < .001)) {
+          final multiplier = useMb ? 1000000 : 1000000000;
+          final bytes = value == null ? 0 : (value * multiplier).round();
+          final maxBytes = useMb ? 100000 * 1000000 : 100000 * 1000000000;
+          if (value == null || !value.isFinite || value < 0 || bytes > maxBytes ||
+              renewal == null || renewal < 1 || renewal > 31 || (thresholds && bytes < 1000000)) {
             setState(() => error = tr(context,
               'Enter a valid plan size and a renewal day from 1 to 31.',
               'اكتب حجم باقة صالح ويوم تجديد من ١ لـ٣١.'));
             return;
           }
           Navigator.pop(context, MonitorSettings(
-            limit: (gb * 1e9).round(), renewal: renewal,
+            limit: bytes, renewal: renewal,
             thresholds: thresholds, spikes: spikes, pinned: widget.settings.pinned,
           ));
         },
