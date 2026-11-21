@@ -46,6 +46,8 @@ void main() {
   void mockStartup({required bool returning, required Future<bool> hasAccess}) {
     messenger.setMockMethodCallHandler(channel, (call) async {
       switch (call.method) {
+        case 'privacySeen':
+          return true;
         case 'returningLaunch':
           return returning;
         case 'hasAccess':
