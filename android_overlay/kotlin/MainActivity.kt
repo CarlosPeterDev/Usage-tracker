@@ -138,6 +138,11 @@ class MainActivity : FlutterActivity() {
                         if (name.isNullOrBlank()) result.success(null)
                         else inBackground(result) { appIcon(name) }
                     }
+                    "privacySeen" -> result.success(getPreferences(MODE_PRIVATE).getBoolean("privacySeen", false))
+                    "markPrivacySeen" -> {
+                        val saved = getPreferences(MODE_PRIVATE).edit().putBoolean("privacySeen", true).commit()
+                        result.success(saved)
+                    }
                     "returningLaunch" -> {
                         val preferences = getPreferences(MODE_PRIVATE)
                         val returning = !launchClaimed &&
