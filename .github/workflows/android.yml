@@ -1,7 +1,7 @@
 name: Build and Release Android
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/privacy-custom-plan-alerts]
   pull_request:
   workflow_dispatch:
 
