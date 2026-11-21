@@ -477,4 +477,30 @@ void main() {
     });
   }
 
+
+  testWidgets('shows privacy notice on first launch and saves acknowledgement', (tester) async {
+    var acknowledged = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'privacySeen':
+          return acknowledged;
+        case 'markPrivacySeen':
+          acknowledged = true;
+          return true;
+        case 'hasAccess':
+          return false;
+        default:
+          return null;
+      }
+    });
+
+    await tester.pumpWidget(const TrackerApp());
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsOneWidget);
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(acknowledged, isTrue);
+    expect(find.text('Open Usage access settings'), findsOneWidget);
+  });
+
 }
