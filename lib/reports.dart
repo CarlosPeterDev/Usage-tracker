@@ -152,17 +152,16 @@ class _PlanEditorState extends State<PlanEditor> {
           final value = raw.isEmpty ? 0.0 : double.tryParse(raw);
           final renewal = int.tryParse(day.text);
           final multiplier = useMb ? 1000000 : 1000000000;
-          final bytes = value == null ? 0 : (value * multiplier).round();
-          final maxBytes = useMb ? 100000 * 1000000 : 100000 * 1000000000;
-          if (value == null || !value.isFinite || value < 0 || bytes > maxBytes ||
-              renewal == null || renewal < 1 || renewal > 31 || (thresholds && bytes < 1000000)) {
+          if (value == null || !value.isFinite || value < 0 || value > 100000 ||
+              renewal == null || renewal < 1 || renewal > 31 ||
+              ((thresholds || custom.isNotEmpty) && value * multiplier < 1000000)) {
             setState(() => error = tr(context,
               'Enter a valid plan size and a renewal day from 1 to 31.',
               'اكتب حجم باقة صالح ويوم تجديد من ١ لـ٣١.'));
             return;
           }
           Navigator.pop(context, MonitorSettings(
-            limit: bytes, renewal: renewal,
+            limit: (value * multiplier).round(), renewal: renewal,
             thresholds: thresholds, spikes: spikes, pinned: widget.settings.pinned,
             customThresholds: custom.toList()..sort(),
           ));

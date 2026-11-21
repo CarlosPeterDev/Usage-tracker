@@ -192,10 +192,20 @@ internal object UsageMonitor {
                 val level = custom.optInt(index, 0)
                 if (level in 1..100) levels.add(level)
             }
-            val key = "threshold:$cycle:$limit:$renewal"
-            val last = if (prefs.getString("thresholdKey", "") == key)
-                prefs.getInt("thresholdLevel", 0) else 0
-            val crossed = levels.filter { it > last && used >= limit * it / 100 }.sorted()
+            val key = cycle.toString()
+            val notified = if (prefs.getString("thresholdCycle", "") == key) {
+                prefs.getStringSet("thresholdsNotified", emptySet()).orEmpty().toMutableSet()
+            } else {
+                val legacy = prefs.getString("thresholdKey", "").orEmpty()
+                val last = prefs.getInt("thresholdLevel", 0)
+                levels.filter { legacy.startsWith("threshold:$cycle:") && it <= last }
+                    .map(Int::toString).toMutableSet()
+            }
+            val crossed = levels.filter { level ->
+                // Compute the ceiling without overflowing for large plans.
+                val required = limit / 100 * level + (limit % 100 * level + 99) / 100
+                level.toString() !in notified && used >= required
+            }.sorted()
             if (crossed.isNotEmpty()) {
                 // One notification per scheduled check, including all thresholds crossed
                 // since the last successful check.
@@ -203,8 +213,11 @@ internal object UsageMonitor {
                     "استهلكت ${crossed.joinToString("٪، ")}٪ من باقة الموبايل."
                     else "You reached ${crossed.joinToString("%, ")}% of your mobile data plan."
                 send(context, 4311, message, ar)
-                prefs.edit().putString("thresholdKey", key)
-                    .putInt("thresholdLevel", crossed.last()).apply()
+                notified.addAll(crossed.map(Int::toString))
+            }
+            if (crossed.isNotEmpty() || prefs.getString("thresholdCycle", "") != key) {
+                prefs.edit().putString("thresholdCycle", key)
+                    .putStringSet("thresholdsNotified", notified).apply()
             }
         }
         if (settings.optBoolean("spikes") && today != null &&

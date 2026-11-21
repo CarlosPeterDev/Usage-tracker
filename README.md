@@ -6,31 +6,35 @@ An Android 7+ app built with Flutter and Dart. A Kotlin bridge reads Android's N
 
 - **Overview** shows today’s device totals for Wi-Fi and mobile data.
 - **Details** compares days with a tappable chart for the selected week or month. Use Today, Yesterday, the chart, or the date picker to open a day. The app list shows names, package names, icons, and usage for that date and network.
-- **Settings** includes the recurring weekly mobile data limit, Android Usage access settings, and a saved Automatic, Light, or Dark appearance. Automatic follows the system and is the default.
+- **Settings** includes the monthly mobile data plan and alert thresholds, the privacy policy, Android Usage access settings, and a saved Automatic, Light, or Dark appearance. Automatic follows the system and is the default.
 - On Android 7–9, tap **Allow mobile data access** to grant the Phone permission used to look up active SIMs. Wi-Fi usage is available without this permission.
-- On first launch, open Android's **Usage access** screen, allow access for **Data Usage Tracker**, then return to the app.
+- On first launch, read and acknowledge the privacy policy, then open Android's **Usage access** screen, allow access for **Data Usage Tracker**, then return to the app.
 
 Usage includes download and upload. Weekly and monthly totals come from a single Android query for the full selected period. Daily views use local midnight-to-midnight boundaries, including for today. Daily chart values can differ from the period total because Android records traffic in time buckets. Android controls how often data refreshes and how much history is available, including usage recorded before installation. The device total may differ from the app list because Android provides device-wide totals and user-scoped app breakdowns separately. Shared UIDs are displayed once with one representative package. The usage shown is the total for the shared UID. Usage stays on the device.
 
 ## Reports and home screen widget
 
 - Set a mobile data allowance and monthly renewal day. Days beyond the end of a short month use its last day. The plan estimate uses Android's mobile usage and can differ from the carrier's balance.
-- Optional notifications track 50%, 80%, and 100% and unusual mobile data use. Android schedules background checks, so updates and alerts are periodic rather than instantaneous.
+- Optional notifications track 50%, 80%, 100%, custom percentages, and unusual mobile data use. Android schedules background checks, so updates and alerts are periodic rather than instantaneous.
 - Open an app row to see daily upload and download totals by network or pin the app to the dashboard. Search and sort by usage or name and filter system and user-installed apps.
 - Choose a custom date range, compare the current week to the same elapsed time last week, or save both networks to CSV through Android's file picker.
 - The dashboard shows today’s totals. Use its Wi-Fi and mobile data cards to open weekly, monthly, and per-app analysis. Open reports or the mobile plan from the dashboard.
 - Tap Add widget on the dashboard or open Settings → Home screen widget. Choose the 2×1 Wi-Fi or mobile data widget to open its analysis, or the 3×1 combined widget to open the dashboard. Launchers without direct pinning can add widgets through their widget picker.
 - Choose Arabic or English from Settings.
 
+## Privacy policy
+
+Read the [English and Arabic privacy policy](PRIVACY_POLICY.md). It is also available in Settings.
+
 ## Test advertisements
 
-The app uses Google's sample IDs with the Google Mobile Ads Flutter plugin and GMA Next-Gen Android SDK. A banner can appear above the dashboard after Usage access is granted. The app-open test ad is eligible on returning cold launches. It is skipped if the dashboard becomes ready, the ad fails, or the two-second loading window closes. First launch and foreground resumes do not show an app-open ad.
+The app uses Google's sample IDs with the Google Mobile Ads Flutter plugin and GMA Next-Gen Android SDK. A banner can appear above the dashboard after Usage access is granted. The app-open test ad is eligible on returning cold launches. It is skipped if the dashboard becomes ready, the ad fails, or the three-second loading window closes. First launch and foreground resumes do not show an app-open ad.
 
 ## Build and publish with GitHub Actions
 
 Each push to the default branch starts **Build and Release Android**. After the tests and Android 7 launch check pass, the workflow publishes `Data-Usage-Tracker.apk` and `Data-Usage-Tracker.aab` together in [GitHub Releases](../../releases). Pull requests build and test both files and leave them in Actions artifacts. You can also run the workflow manually from the default branch. The release tag identifies its commit, so a rerun uses the same release.
 
-Install the APK directly on Android. The workflow uses development signing. A persistent signing key is needed for reliable in-place updates and Play Store submission.
+Install the APK directly on Android. Pull request and feature branch builds use development signing. The default branch publishes only when `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are configured as repository Actions secrets. Preserve the upload key and its backup for future Play submissions. Existing development-signed installs may require a fresh installation when switching signing certificates.
 
 For a local Android build with Flutter 3.50.0, JDK 21, and Android SDK 37:
 

@@ -15,6 +15,34 @@ dependencies {
     implementation("com.google.android.libraries.ads.mobile.sdk:ads-mobile-sdk:1.6.0")
 }
 GRADLE
+if [[ -n "${TRACKER_KEYSTORE_PATH:-}" ]]; then
+    test -s "$TRACKER_KEYSTORE_PATH"
+    sed -i 's/signingConfig = signingConfigs.getByName("debug")/signingConfig = signingConfigs.getByName("upload")/' "$gradle_file"
+    grep -q 'signingConfig = signingConfigs.getByName("upload")' "$gradle_file"
+    cat >> "$gradle_file" <<'GRADLE'
+
+android {
+    signingConfigs {
+        maybeCreate("upload").apply {
+            storeFile = file(System.getenv("TRACKER_KEYSTORE_PATH"))
+            storePassword = System.getenv("TRACKER_STORE_PASSWORD")
+            keyAlias = System.getenv("TRACKER_KEY_ALIAS")
+            keyPassword = System.getenv("TRACKER_KEY_PASSWORD")
+        }
+    }
+}
+GRADLE
+    # Register the signing config before the template's release build type uses it.
+    python3 - "$gradle_file" <<'PYTHON'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+gradle, signing = path.read_text().rsplit("android {", 1)
+signing = signing.rsplit("}", 1)[0]
+path.write_text(gradle.replace("android {", "android {" + signing, 1))
+PYTHON
+fi
 mkdir -p android
 cp -R "$scaffold/data_usage_tracker/android/." android/
 cp android_overlay/AndroidManifest.xml android/app/src/main/
