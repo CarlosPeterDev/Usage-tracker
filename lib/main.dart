@@ -64,6 +64,8 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
   bool loadingScreen = false;
   bool dashboardReady = false;
   bool showingAd = false;
+  bool privacyChecked = false;
+  bool privacyPending = false;
 
   @override
   void initState() {
@@ -71,8 +73,7 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     restoreAppearance();
     restoreLanguage();
-    final ads = widget.ads;
-    if (ads != null) prepareLaunchAd(ads);
+    checkFirstLaunch();
   }
 
   @override
@@ -97,10 +98,18 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     if (!showingAd) closeLoadingScreen();
   }
 
+  Future<void> checkFirstLaunch() async {
+    bool returning = true;
+    try { returning = await usage.returningLaunch(); } catch (_) {}
+    if (!mounted) return;
+    setState(() { privacyChecked = true; privacyPending = !returning; });
+    if (returning && widget.ads != null) prepareLaunchAd(widget.ads!);
+  }
+
   Future<void> prepareLaunchAd(TrackerAds ads) async {
     LaunchAd? ad;
     try {
-      if (!await usage.returningLaunch() || !mounted || dashboardReady) return;
+      if (!mounted || dashboardReady || privacyPending) return;
       setState(() => loadingScreen = true);
       startupDeadline = Timer(const Duration(seconds: 2), closeLoadingScreen);
       await WidgetsBinding.instance.endOfFrame;
@@ -170,7 +179,13 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     locale: Locale(language),
     supportedLocales: const [Locale('en'), Locale('ar')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    home: Stack(
+    home: !privacyChecked
+      ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+      : privacyPending
+      ? PrivacyPolicyPage(firstLaunch: true, onContinue: () {
+          setState(() => privacyPending = false);
+        })
+      : Stack(
       fit: StackFit.expand,
       children: [
         ExcludeSemantics(
