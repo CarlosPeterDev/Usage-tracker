@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:data_usage_tracker/main.dart';
 import 'package:data_usage_tracker/reports.dart';
 import 'package:data_usage_tracker/usage.dart';
-import 'package:material_ui/material_ui.dart' show Brightness, Image, MaterialApp, SizedBox, Theme, ThemeMode;
+import 'package:material_ui/material_ui.dart' show Brightness, Image, InputChip, MaterialApp, SizedBox, TextField, Theme, ThemeMode;
 import 'package:flutter/services.dart' show MethodChannel, Offset, Size;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -25,6 +25,7 @@ void main() {
   testWidgets('opens Android Usage access settings when permission is missing', (tester) async {
     var opened = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       if (call.method == 'hasAccess') return false;
       if (call.method == 'openSettings') opened = true;
       return null;
@@ -39,6 +40,7 @@ void main() {
   testWidgets('defaults to automatic and persists a manual appearance', (tester) async {
     String? saved;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'appearance':
           return saved;
@@ -100,6 +102,7 @@ void main() {
     final queries = <String, List<Object?>>{};
     final dailyWindows = <List<Object?>>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -203,6 +206,7 @@ void main() {
         'days': List.generate(7, (_) => {'mobile': 10, 'wifi': 20}),
       };
       messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
         switch (call.method) {
           case 'hasAccess':
             return true;
@@ -288,6 +292,7 @@ void main() {
     }
 
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -342,6 +347,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     var requested = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
         case 'needsPhonePermission':
@@ -380,6 +386,7 @@ void main() {
   testWidgets('shows the selected app icon and identity in usage history', (tester) async {
     final requested = <String>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       if (call.method != 'icon') return null;
       requested.add((call.arguments as Map)['package'] as String);
       return base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgWNUBAAHgATPetbznAAAAAElFTkSuQmCC');
@@ -401,6 +408,7 @@ void main() {
   testWidgets('adds any of the three widgets from the dashboard', (tester) async {
     final requests = <String>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -433,6 +441,7 @@ void main() {
     testWidgets('opens the correct page for the $destination widget', (tester) async {
       String? pending = destination;
       messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
         switch (call.method) {
           case 'widgetNetwork':
             final next = pending;
@@ -468,4 +477,101 @@ void main() {
     });
   }
 
+
+  testWidgets('shows privacy notice on first launch and saves acknowledgement', (tester) async {
+    var acknowledged = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'privacySeen':
+          return acknowledged;
+        case 'markPrivacySeen':
+          acknowledged = true;
+          return true;
+        case 'hasAccess':
+          return false;
+        default:
+          return null;
+      }
+    });
+
+    await tester.pumpWidget(const TrackerApp());
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsOneWidget);
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(acknowledged, isTrue);
+    expect(find.text('Open Usage access settings'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    final policy = find.text('Privacy & Data');
+    await tester.ensureVisible(policy);
+    await tester.tap(policy);
+    await tester.pumpAndSettle();
+    expect(find.text('Your privacy matters'), findsOneWidget);
+    expect(find.text('Continue'), findsNothing);
+  });
+
+
+  testWidgets('settings saves the monthly plan and custom alerts across restarts', (tester) async {
+    String? saved;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'privacySeen':
+        case 'hasAccess':
+          return true;
+        case 'daily':
+          return {'mobile': null, 'wifi': {'total': 0, 'apps': []}};
+        case 'monitorSettings':
+          return saved;
+        case 'saveMonitorSettings':
+          saved = (call.arguments as Map)['value'] as String;
+          return null;
+        case 'notificationPermission':
+          return false;
+        default:
+          return null;
+      }
+    });
+
+    Future<void> openPlan() async {
+      await tester.tap(find.byTooltip('Settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Mobile data plan').last);
+      await tester.pumpAndSettle();
+    }
+
+    await tester.pumpWidget(const TrackerApp());
+    await tester.pumpAndSettle();
+    await openPlan();
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '5');
+    await tester.enterText(fields.at(1), '25');
+    for (final value in ['18', '25', '90']) {
+      await tester.ensureVisible(fields.at(2));
+      await tester.enterText(fields.at(2), value);
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+    }
+    final removed = find.widgetWithText(InputChip, '25%');
+    tester.widget<InputChip>(removed).onDeleted!();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final plan = MonitorSettings.fromJson(jsonDecode(saved!) as Map<String, dynamic>);
+    expect(plan.limit, 5000000000);
+    expect(plan.renewal, 25);
+    expect(plan.customThresholds, [18, 90]);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(const TrackerApp());
+    await tester.pumpAndSettle();
+    await openPlan();
+    expect(find.widgetWithText(InputChip, '18%'), findsOneWidget);
+    expect(find.widgetWithText(InputChip, '25%'), findsNothing);
+    expect(find.widgetWithText(InputChip, '90%'), findsOneWidget);
+    expect(tester.widget<TextField>(fields.at(0)).controller!.text, '5.0');
+    expect(tester.widget<TextField>(fields.at(1)).controller!.text, '25');
+  });
 }

@@ -30,7 +30,7 @@ void main() {
       'limit': 500, 'renewal': 18, 'thresholds': true, 'spikes': true, 'pinned': ['old'],
     }).withPins({'new'});
     expect(settings.toJson(), {
-      'limit': 500, 'renewal': 18, 'thresholds': true, 'spikes': true, 'pinned': ['new'],
+      'limit': 500, 'renewal': 18, 'thresholds': true, 'spikes': true, 'pinned': ['new'], 'customThresholds': [],
     });
   });
 }

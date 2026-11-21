@@ -36,6 +36,8 @@ class _PlanEditorState extends State<PlanEditor> {
   late final day = TextEditingController(text: '${widget.settings.renewal}');
   late bool thresholds = widget.settings.thresholds;
   late bool spikes = widget.settings.spikes;
+  late final custom = <int>{...widget.settings.customThresholds};
+  final customInput = TextEditingController();
   late bool useMb;
   String? error;
 
@@ -73,6 +75,7 @@ class _PlanEditorState extends State<PlanEditor> {
   void dispose() {
     size.dispose();
     day.dispose();
+    customInput.dispose();
     super.dispose();
   }
 
@@ -117,6 +120,22 @@ class _PlanEditorState extends State<PlanEditor> {
           value: thresholds, onChanged: (value) => setState(() => thresholds = value),
           title: Text(tr(context, 'Alerts at 50%, 80% and 100%', 'تنبيهات عند ٥٠٪ و٨٠٪ و١٠٠٪')),
         ),
+        Text(tr(context, 'Custom plan alerts (%)', 'تنبيهات مخصصة من الباقة (%)')),
+        Wrap(spacing: 6, children: [for (final percent in (custom.toList()..sort()))
+          InputChip(label: Text('$percent%'), onDeleted: () => setState(() => custom.remove(percent))),
+        ]),
+        Row(children: [
+          Expanded(child: TextField(controller: customInput, keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: tr(context, 'Percent (1–100)', 'النسبة (١–١٠٠)')))),
+          TextButton(onPressed: () {
+            final value = int.tryParse(customInput.text.trim());
+            if (value == null || value < 1 || value > 100) {
+              setState(() => error = tr(context, 'Enter a percentage from 1 to 100.', 'اكتب نسبة من ١ إلى ١٠٠.'));
+              return;
+            }
+            setState(() { custom.add(value); customInput.clear(); error = null; });
+          }, child: Text(tr(context, 'Add', 'إضافة'))),
+        ]),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           value: spikes, onChanged: (value) => setState(() => spikes = value),
@@ -133,18 +152,18 @@ class _PlanEditorState extends State<PlanEditor> {
           final value = raw.isEmpty ? 0.0 : double.tryParse(raw);
           final renewal = int.tryParse(day.text);
           final multiplier = useMb ? 1000000 : 1000000000;
-          final bytes = value == null ? 0 : (value * multiplier).round();
-          final maxBytes = useMb ? 100000 * 1000000 : 100000 * 1000000000;
-          if (value == null || !value.isFinite || value < 0 || bytes > maxBytes ||
-              renewal == null || renewal < 1 || renewal > 31 || (thresholds && bytes < 1000000)) {
+          if (value == null || !value.isFinite || value < 0 || value > 100000 ||
+              renewal == null || renewal < 1 || renewal > 31 ||
+              ((thresholds || custom.isNotEmpty) && value * multiplier < 1000000)) {
             setState(() => error = tr(context,
               'Enter a valid plan size and a renewal day from 1 to 31.',
               'اكتب حجم باقة صالح ويوم تجديد من ١ لـ٣١.'));
             return;
           }
           Navigator.pop(context, MonitorSettings(
-            limit: bytes, renewal: renewal,
+            limit: (value * multiplier).round(), renewal: renewal,
             thresholds: thresholds, spikes: spikes, pinned: widget.settings.pinned,
+            customThresholds: custom.toList()..sort(),
           ));
         },
         child: Text(tr(context, 'Save', 'حفظ')),

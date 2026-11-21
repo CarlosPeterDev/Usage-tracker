@@ -138,13 +138,18 @@ class MainActivity : FlutterActivity() {
                         if (name.isNullOrBlank()) result.success(null)
                         else inBackground(result) { appIcon(name) }
                     }
+                    "privacySeen" -> result.success(getPreferences(MODE_PRIVATE).getBoolean("privacySeen", false))
+                    "markPrivacySeen" -> {
+                        val saved = getPreferences(MODE_PRIVATE).edit().putBoolean("privacySeen", true).commit()
+                        if (saved) launchClaimed = true
+                        result.success(saved)
+                    }
                     "returningLaunch" -> {
                         val preferences = getPreferences(MODE_PRIVATE)
                         val returning = !launchClaimed &&
-                            preferences.getBoolean("launchedBefore", false)
+                            preferences.getBoolean("privacySeen", false)
                         launchClaimed = true
-                        preferences.edit().putBoolean("launchedBefore", true).apply()
-                        result.success(returning && UsageMonitor.hasAccess(this))
+                        result.success(returning)
                     }
                     "appearance" -> result.success(
                         getPreferences(MODE_PRIVATE).getString("appearance", "system")

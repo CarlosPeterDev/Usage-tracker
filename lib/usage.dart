@@ -201,7 +201,7 @@ class UsageService {
 class MonitorSettings {
   const MonitorSettings({
     this.limit = 0, this.renewal = 1, this.thresholds = false,
-    this.spikes = false, this.pinned = const {},
+    this.spikes = false, this.pinned = const {}, this.customThresholds = const [],
   });
 
   MonitorSettings.fromJson(Map<String, dynamic> json)
@@ -209,21 +209,23 @@ class MonitorSettings {
       renewal = json['renewal'] as int? ?? 1,
       thresholds = json['thresholds'] as bool? ?? false,
       spikes = json['spikes'] as bool? ?? false,
-      pinned = ((json['pinned'] as List?) ?? const []).cast<String>().toSet();
+      pinned = ((json['pinned'] as List?) ?? const []).cast<String>().toSet(),
+      customThresholds = ((json['customThresholds'] as List?) ?? const []).whereType<num>().map((n) => n.toInt()).where((n) => n >= 1 && n <= 100).toSet().toList()..sort();
 
   final int limit;
   final int renewal;
   final bool thresholds;
   final bool spikes;
   final Set<String> pinned;
+  final List<int> customThresholds;
 
   MonitorSettings withPins(Set<String> pins) => MonitorSettings(
-    limit: limit, renewal: renewal, thresholds: thresholds, spikes: spikes, pinned: pins,
+    limit: limit, renewal: renewal, thresholds: thresholds, spikes: spikes, pinned: pins, customThresholds: customThresholds,
   );
 
   Map<String, Object> toJson() => {
     'limit': limit, 'renewal': renewal, 'thresholds': thresholds,
-    'spikes': spikes, 'pinned': pinned.toList(),
+    'spikes': spikes, 'pinned': pinned.toList(), 'customThresholds': customThresholds,
   };
 }
 

@@ -3,10 +3,11 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart'
-    show MissingPluginException, PlatformException, SystemUiOverlayStyle;
+    show MethodChannel, MissingPluginException, PlatformException, SystemUiOverlayStyle;
 
 import 'feature_language.dart';
 import 'reports.dart';
+import 'privacy_policy_page.dart';
 import 'test_ads.dart';
 import 'tracker_ui.dart';
 import 'usage.dart';
@@ -57,21 +58,23 @@ class TrackerApp extends StatefulWidget {
 class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
   final usage = UsageService();
   ThemeMode mode = ThemeMode.system;
-  String language = 'en';
+  String language = WidgetsBinding.instance.platformDispatcher.locale.languageCode == 'ar' ? 'ar' : 'en';
   int appearanceRevision = 0;
   Timer? startupDeadline;
   bool loadingScreen = false;
   bool dashboardReady = false;
   bool showingAd = false;
+  bool privacyChecked = false;
+  bool privacyPending = false;
+  bool startupInterrupted = false;
+  bool savingPrivacy = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     restoreAppearance();
-    restoreLanguage();
-    final ads = widget.ads;
-    if (ads != null) prepareLaunchAd(ads);
+    checkFirstLaunch();
   }
 
   @override
@@ -83,7 +86,12 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused && !showingAd) closeLoadingScreen();
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      startupInterrupted = true;
+      if (!showingAd) closeLoadingScreen();
+    }
   }
 
   void closeLoadingScreen() {
@@ -96,12 +104,57 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     if (!showingAd) closeLoadingScreen();
   }
 
+  static const privacyChannel = MethodChannel('data_usage_tracker/usage');
+
+  Future<void> checkFirstLaunch() async {
+    var seen = false;
+    var returning = false;
+    try {
+      seen = await privacyChannel.invokeMethod<bool>('privacySeen') ?? false;
+      if (seen && widget.ads != null) {
+        returning =
+            await privacyChannel.invokeMethod<bool>('returningLaunch') ?? false;
+      }
+    } on PlatformException {
+      // Keep startup available when the platform cannot read preferences.
+    } on MissingPluginException {
+      // Keep startup available on unsupported platforms.
+    }
+    if (!mounted) return;
+    setState(() {
+      privacyChecked = true;
+      privacyPending = !seen;
+    });
+    if (seen) unawaited(restoreLanguage());
+    if (returning && !startupInterrupted) {
+      unawaited(prepareLaunchAd(widget.ads!));
+    }
+  }
+
+  Future<void> completePrivacy() async {
+    if (savingPrivacy) return;
+    setState(() => savingPrivacy = true);
+    try {
+      final saved = await privacyChannel.invokeMethod<bool>('markPrivacySeen');
+      if (saved == true && mounted) {
+        setState(() => privacyPending = false);
+        unawaited(restoreLanguage());
+      }
+    } on PlatformException {
+      // Keep the notice visible so acknowledgement can be retried.
+    } on MissingPluginException {
+      // Keep the notice visible so acknowledgement can be retried.
+    } finally {
+      if (mounted) setState(() => savingPrivacy = false);
+    }
+  }
+
   Future<void> prepareLaunchAd(TrackerAds ads) async {
     LaunchAd? ad;
     try {
-      if (!await usage.returningLaunch() || !mounted || dashboardReady) return;
+      if (!mounted || dashboardReady || privacyPending) return;
       setState(() => loadingScreen = true);
-      startupDeadline = Timer(const Duration(seconds: 2), closeLoadingScreen);
+      startupDeadline = Timer(const Duration(seconds: 3), closeLoadingScreen);
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || !loadingScreen) return;
       ad = await ads.loadLaunchAd();
@@ -146,7 +199,9 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
   Future<void> restoreLanguage() async {
     try {
       final saved = await usage.language();
-      if (mounted && saved == 'ar') setState(() => language = 'ar');
+      if (mounted && (saved == 'ar' || saved == 'en')) {
+        setState(() => language = saved!);
+      }
     } on PlatformException {
       // English is the default if preferences are unavailable.
     } on MissingPluginException {
@@ -169,7 +224,11 @@ class _TrackerAppState extends State<TrackerApp> with WidgetsBindingObserver {
     locale: Locale(language),
     supportedLocales: const [Locale('en'), Locale('ar')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    home: Stack(
+    home: !privacyChecked
+      ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+      : privacyPending
+      ? PrivacyPolicyPage(firstLaunch: true, onContinue: savingPrivacy ? null : completePrivacy)
+      : Stack(
       fit: StackFit.expand,
       children: [
         ExcludeSemantics(
@@ -239,7 +298,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   bool initialLoadFinished = false;
   bool needsPhonePermission = false;
   String? error;
-  int goal = 0;
   int request = 0;
   final dailyCache = <DateTime, _DailyUsage>{};
   final periodCache = <(DateTime, bool), UsagePeriod>{};
@@ -426,7 +484,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       final period = details ?
           (month ? await usage.monthly(start) : await usage.weekly(start)) : null;
       if (!mounted || ticket != request) return;
-      final savedGoal = await usage.goal();
       final savedMonitor = await usage.settings();
       if (!mounted || ticket != request) return;
       setState(() {
@@ -435,7 +492,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         busy = false;
         rememberDay(selected, data);
         if (period != null) rememberPeriod((start, month), period);
-        goal = savedGoal;
         monitor = savedMonitor;
       });
       schedulePrefetch();
@@ -587,17 +643,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   void requestPhonePermission() => platformAction(usage.requestPhonePermission, reload: true);
 
-  Future<void> editGoal() async {
-    final updated = await showDialog<int>(
-      context: context, builder: (_) => GoalDialog(initialBytes: goal),
-    );
-    if (updated == null || !mounted) return;
-    await platformAction(() async {
-      await usage.saveGoal(updated);
-      if (mounted) setState(() => goal = updated);
-    });
-  }
-
   Future<void> chooseAppearance() async {
     final next = await showDialog<ThemeMode>(
       context: context,
@@ -643,19 +688,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   }
 
   Future<void> editPlan() async {
-    var next = await showDialog<MonitorSettings>(
+    final next = await showDialog<MonitorSettings>(
       context: context, builder: (_) => PlanEditor(settings: monitor),
     );
     if (next == null || !mounted) return;
-    if ((next.thresholds || next.spikes) && !await usage.notificationPermission()) {
-      next = MonitorSettings(limit: next.limit, renewal: next.renewal, pinned: next.pinned);
+    if ((next.thresholds || next.spikes || next.customThresholds.isNotEmpty) && !await usage.notificationPermission()) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(tr(context, 'Notification permission is off.', 'إذن الإشعارات مقفول.')),
       ));
     }
     if (!mounted) return;
-    final updated = next;
-    await platformAction(() => saveMonitor(updated));
+    await platformAction(() => saveMonitor(next));
   }
 
   Future<void> saveMonitor(MonitorSettings settings) async {
@@ -755,6 +798,14 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.data_usage),
+              title: Text(tr(context, 'Mobile data plan', 'باقة الموبايل')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(editPlan());
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.widgets_outlined),
               title: Text(tr(context, 'Home screen widget', 'ويدجت الشاشة الرئيسية')),
               onTap: () {
@@ -763,19 +814,21 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.flag_outlined),
-              title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                editGoal();
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.refresh),
               title: Text(tr(context, 'Refresh usage', 'حدّث الاستهلاك')),
               onTap: () {
                 Navigator.pop(sheetContext);
                 load();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.shield_outlined),
+              title: Text(tr(context, 'Privacy & Data', 'الخصوصية والبيانات')),
+              subtitle: Text(tr(context, 'Permissions, local data and advertising', 'الأذونات والبيانات المحلية والإعلانات')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => const PrivacyPolicyPage()));
               },
             ),
             ListTile(
@@ -803,16 +856,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               await editPlan();
               if (context.mounted) update(() {});
             }),
-          ListTile(
-            leading: const Icon(Icons.flag_outlined),
-            title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-            subtitle: goal > 0 ? Text(formatBytes(goal)) : null,
-            trailing: const Icon(Icons.edit_outlined),
-            onTap: () async {
-              await editGoal();
-              if (context.mounted) update(() {});
-            },
-          ),
+
         ],
       )),
     )),
@@ -1132,12 +1176,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                       ),
                     ]),
                   ),
-                  if (mobile && !monthly && goal > 0 && total != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Text(tr(context, '${formatBytes(total)} of ${formatBytes(goal)} weekly limit',
-                        '${formatBytes(total)} من الحد الأسبوعي ${formatBytes(goal)}')),
-                    ),
                   Wrap(
                     spacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
@@ -1401,113 +1439,4 @@ class _PeriodChartState extends State<PeriodChart> {
           : Row(children: columns);
     });
   }
-}
-
-class GoalDialog extends StatefulWidget {
-  const GoalDialog({super.key, required this.initialBytes});
-
-  final int initialBytes;
-
-  @override
-  State<GoalDialog> createState() => _GoalDialogState();
-}
-
-class _GoalDialogState extends State<GoalDialog> {
-  late final controller = TextEditingController();
-  late bool useMb;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    final bytes = widget.initialBytes;
-    useMb = bytes > 0 && bytes < 1000000000;
-    if (bytes == 0) {
-      controller.text = '';
-    } else if (useMb) {
-      controller.text = (bytes / 1000000).toStringAsFixed(0);
-    } else {
-      controller.text = (bytes / 1000000000).toString();
-    }
-  }
-
-  void _onUnitChanged(bool mb) {
-    if (mb == useMb) return;
-    final raw = controller.text.trim().replaceAll(',', '.');
-    final value = double.tryParse(raw) ?? 0;
-    setState(() {
-      final wasMb = useMb;
-      useMb = mb;
-      if (value > 0) {
-        final bytes = wasMb ? value * 1000000 : value * 1000000000;
-        controller.text = useMb
-            ? (bytes / 1000000).toStringAsFixed(0)
-            : (bytes / 1000000000).toString();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                  labelText: tr(context, useMb ? 'Limit (MB)' : 'Limit (GB)',
-                    useMb ? 'الحد (ميجابايت)' : 'الحد (جيجابايت)'),
-                  errorText: error,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: false, label: Text('GB')),
-                ButtonSegment(value: true, label: Text('MB')),
-              ],
-              selected: {useMb},
-              onSelectionChanged: (set) => _onUnitChanged(set.first),
-            ),
-          ],
-        ),
-      ],
-    ),
-    actions: [
-      if (widget.initialBytes > 0)
-        TextButton(onPressed: () => Navigator.pop(context, 0), child: Text(tr(context, 'Remove', 'إزالة'))),
-      TextButton(onPressed: () => Navigator.pop(context), child: Text(tr(context, 'Cancel', 'إلغاء'))),
-      FilledButton(
-        onPressed: () {
-          final raw = controller.text.trim().replaceAll(',', '.');
-          final value = double.tryParse(raw);
-          final multiplier = useMb ? 1000000 : 1000000000;
-          final minValue = useMb ? 1.0 : 0.001;
-          final maxValue = useMb ? 100000000.0 : 100000.0;
-          if (value == null || !value.isFinite || value < minValue || value > maxValue) {
-            setState(() => error = tr(context,
-              useMb ? 'Enter 1–100000000 MB.' : 'Enter 0.001–100000 GB.',
-              useMb ? 'اكتب قيمة من ١ لـ١٠٠٠٠٠٠٠٠ ميجابايت.' : 'اكتب قيمة من ٠٫٠٠١ لـ١٠٠٠٠٠ جيجابايت.'));
-            return;
-          }
-          Navigator.pop(context, (value * multiplier).round());
-        },
-        child: Text(tr(context, 'Save', 'حفظ')),
-      ),
-    ],
-  );
 }
