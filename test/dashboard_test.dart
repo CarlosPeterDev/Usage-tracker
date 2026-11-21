@@ -501,6 +501,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(acknowledged, isTrue);
     expect(find.text('Open Usage access settings'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    final policy = find.text('Privacy & Data');
+    await tester.ensureVisible(policy);
+    await tester.tap(policy);
+    await tester.pumpAndSettle();
+    expect(find.text('Your privacy matters'), findsOneWidget);
+    expect(find.text('Continue'), findsNothing);
   });
 
 

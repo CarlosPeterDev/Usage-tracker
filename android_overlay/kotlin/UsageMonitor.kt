@@ -198,7 +198,8 @@ internal object UsageMonitor {
             } else {
                 val legacy = prefs.getString("thresholdKey", "").orEmpty()
                 val last = prefs.getInt("thresholdLevel", 0)
-                levels.filter { legacy.startsWith("threshold:$cycle:") && it <= last }
+                // Previous public releases supported only the built-in levels.
+                listOf(50, 80, 100).filter { legacy.startsWith("threshold:$cycle:") && it <= last }
                     .map(Int::toString).toMutableSet()
             }
             val crossed = levels.filter { level ->

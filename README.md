@@ -34,7 +34,7 @@ The app uses Google's sample IDs with the Google Mobile Ads Flutter plugin and G
 
 Each push to the default branch starts **Build and Release Android**. After the tests and Android 7 launch check pass, the workflow publishes `Data-Usage-Tracker.apk` and `Data-Usage-Tracker.aab` together in [GitHub Releases](../../releases). Pull requests build and test both files and leave them in Actions artifacts. You can also run the workflow manually from the default branch. The release tag identifies its commit, so a rerun uses the same release.
 
-Install the APK directly on Android. Pull request and feature branch builds use development signing. The default branch publishes only when `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are configured as repository Actions secrets. Preserve the upload key and its backup for future Play submissions. Existing development-signed installs may require a fresh installation when switching signing certificates.
+Install the APK directly on Android. Pull request and feature branch builds use development signing. The default branch publishes a development-signed test release unless `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are configured as repository Actions secrets. With all four secrets set, CI signs with the configured key. Preserve the upload key and its backup for future Play submissions. Existing development-signed installs may require a fresh installation when switching signing certificates.
 
 For a local Android build with Flutter 3.50.0, JDK 21, and Android SDK 37:
 
