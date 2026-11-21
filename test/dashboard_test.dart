@@ -25,6 +25,7 @@ void main() {
   testWidgets('opens Android Usage access settings when permission is missing', (tester) async {
     var opened = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       if (call.method == 'hasAccess') return false;
       if (call.method == 'openSettings') opened = true;
       return null;
@@ -39,6 +40,7 @@ void main() {
   testWidgets('defaults to automatic and persists a manual appearance', (tester) async {
     String? saved;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'appearance':
           return saved;
@@ -100,6 +102,7 @@ void main() {
     final queries = <String, List<Object?>>{};
     final dailyWindows = <List<Object?>>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -203,6 +206,7 @@ void main() {
         'days': List.generate(7, (_) => {'mobile': 10, 'wifi': 20}),
       };
       messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
         switch (call.method) {
           case 'hasAccess':
             return true;
@@ -288,6 +292,7 @@ void main() {
     }
 
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -342,6 +347,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     var requested = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
         case 'needsPhonePermission':
@@ -380,6 +386,7 @@ void main() {
   testWidgets('shows the selected app icon and identity in usage history', (tester) async {
     final requested = <String>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       if (call.method != 'icon') return null;
       requested.add((call.arguments as Map)['package'] as String);
       return base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgWNUBAAHgATPetbznAAAAAElFTkSuQmCC');
@@ -401,6 +408,7 @@ void main() {
   testWidgets('adds any of the three widgets from the dashboard', (tester) async {
     final requests = <String>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
       switch (call.method) {
         case 'hasAccess':
           return true;
@@ -433,6 +441,7 @@ void main() {
     testWidgets('opens the correct page for the $destination widget', (tester) async {
       String? pending = destination;
       messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'privacySeen') return true;
         switch (call.method) {
           case 'widgetNetwork':
             final next = pending;
