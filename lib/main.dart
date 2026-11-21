@@ -648,7 +648,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     );
     if (next == null || !mounted) return;
     if ((next.thresholds || next.spikes) && !await usage.notificationPermission()) {
-      next = MonitorSettings(limit: next.limit, renewal: next.renewal, pinned: next.pinned);
+      next = MonitorSettings(limit: next.limit, renewal: next.renewal, pinned: next.pinned, customThresholds: next.customThresholds);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(tr(context, 'Notification permission is off.', 'إذن الإشعارات مقفول.')),
       ));
@@ -763,14 +763,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.flag_outlined),
-              title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                editGoal();
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.refresh),
               title: Text(tr(context, 'Refresh usage', 'حدّث الاستهلاك')),
               onTap: () {
@@ -803,16 +795,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               await editPlan();
               if (context.mounted) update(() {});
             }),
-          ListTile(
-            leading: const Icon(Icons.flag_outlined),
-            title: Text(tr(context, 'Weekly mobile limit', 'الحد الأسبوعي للداتا')),
-            subtitle: goal > 0 ? Text(formatBytes(goal)) : null,
-            trailing: const Icon(Icons.edit_outlined),
-            onTap: () async {
-              await editGoal();
-              if (context.mounted) update(() {});
-            },
-          ),
+
         ],
       )),
     )),
