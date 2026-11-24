@@ -35,6 +35,25 @@ class MainActivity : FlutterActivity() {
     }
 
     private var usageChannel: MethodChannel? = null
+    private var lastWidgetRefresh = 0L
+
+    // Refresh home-screen widgets as soon as the app is opened or brought back to the
+    // foreground, instead of waiting for the next scheduled background update.
+    // The periodic job and widget onUpdate keep working exactly as before.
+    override fun onResume() {
+        super.onResume()
+        val now = System.currentTimeMillis()
+        if (now - lastWidgetRefresh < 2_000) return
+        lastWidgetRefresh = now
+        val context = applicationContext
+        UsageMonitor.worker.execute {
+            try {
+                if (UsageMonitor.widgetIds(context).isNotEmpty()) UsageMonitor.refresh(context)
+            } catch (_: Exception) {
+                // Permission or subscriber may change while refreshing; the next update retries.
+            }
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
